@@ -59,6 +59,70 @@ cd web && npm install && npm run dev
 
 ---
 
+## 🏗️ V3.4（進行中）— 多角色股市策略系統重構
+
+> 舊版策略本質是「一份扁平 20 格參數 + 固定四技術訊號」，表達力有限。這版正在做一次**地基級重構**：把策略升級成「**多流派因子 × 持有週期 × 大盤 regime 自適應**」，用**多角色 AI 專家協作**設計、用**確定性回測引擎**驗證，產出更精準的策略庫。
+
+### 為什麼重構（舊策略「太 rough」的三個根因）
+
+1. **表達力弱** — 扁平參數無法表達「電子股一套、金融股另一套」「多頭放寬、空頭收緊」這種分層／條件邏輯。
+2. **輸入維度窄** — 只有日 K 價量 + 年度 EPS/ROE，缺三大法人籌碼、月營收動能、估值分位、融資券、大盤結構。
+3. **回測太薄** — 只算勝率、固定持有 20 日，沒有分市況、最大回撤、夏普；「歷史勝率 70%」可能只是某段大多頭撐出來的假象。
+
+### 架構：兩層 + 四塊共用地基
+
+```
+研發層（多 AI 專家 workflow，跑一次、人工挑）
+  資料專家 + Regime專家 → 7流派分析師 → 回測工程師 → 風控批判 → 首席策略長
+  產出 → strategies/v2/*.json + 研發報告
+        │ 共用「純 Python 確定性地基」（研發驗證過＝上線一模一樣）
+固化層（每天跑進 main.py）
+  逐檔: 算因子 → 判大盤 regime → 套最佳策略 → 規則決定 BUY/WATCH/SKIP → LLM 寫成專家會議紀要
+```
+
+> 關鍵設計：**回測數字一律來自確定性引擎，LLM 不臆造**。AI 專家負責「設計因子、看回測調整、組裝策略、寫人話理由」，買賣訊號由可回測的量化規則決定——所以「多專家」與「可回測」能並存。
+
+### 進度
+
+| 階段 | 內容 | 狀態 |
+|---|---|---|
+| **P1 資料層** | FinMind 7 dataset 的 point-in-time loader（法人／月營收／估值／融資券／外資持股／大盤指數）+ 快取限流 + `FactorContext` | ✅ 完成 |
+| **P2 因子層** | 7 流派 **29 因子**（價值3／成長3／動能4／籌碼4／營收3／反轉3／突破3 + legacy 相容6）+ registry + `build_panel` | ✅ 完成 |
+| **P3 回測引擎** | `regime_classify`（判多／盤／空）+ 分市況 `backtest_v2`（夏普／最大回撤／樣本外）+ 投組聚合 | 🔜 規劃中 |
+| **P4 策略 schema** | 分層 schema（factors 加權 + regime_overrides + period）+ v1/v2 向後相容 | 🔜 |
+| **P5 研發 workflow** | 多專家協作設計 + 回測驗證 → 產策略庫 | 🔜 |
+| **P6 固化 runtime** | `evaluate_v2` + LLM 解說員，接回 `main.py` | 🔜 |
+| **P7 前端／API** | 策略庫 v2 + AI 生成器升級 | 🔜 |
+
+> P1 + P2 共 **105 個自動化測試全綠**，所有因子無未來資訊（point-in-time）、值域 0~1、缺料統一處理。
+
+### 怎麼測
+
+```bash
+# 1) 單元測試（不需任何 token）
+uv run pytest -q
+
+# 2) 對真實股票算 29 個因子（需 .env 內的 FINMIND_TOKEN）
+uv run python -c "
+from dotenv import load_dotenv; load_dotenv('.env')
+from stock_strategies.context import build_context
+from stock_strategies.factors import FACTOR_REGISTRY, compute_factor, compute_all_factors
+ctx = build_context('2330', '2024-06-28')
+for n in sorted(FACTOR_REGISTRY): print(f'{n:32s}', compute_factor(n, ctx, {}))
+fl = [{'name': n, 'weight': 1} for n in FACTOR_REGISTRY]
+print('composite =', round(compute_all_factors(ctx, fl, {})['composite'], 3))
+"
+```
+
+實測台積電（2330）2024-06-28：動能派頂、價值派趴、成長派不錯——方向完全符合當時 AI 題材大多頭、估值偏貴的現實，證明因子有意義。
+
+### 設計文件
+
+- **完整設計規格**：[`docs/superpowers/specs/`](docs/superpowers/specs/)（169K 字，含 8 個跨模組介面契約 §4、回測方法、七流派因子公式）
+- **實作計畫**：[`docs/superpowers/plans/`](docs/superpowers/plans/)（P1、P2… 每塊 bite-sized TDD）
+
+---
+
 ## 🌙 夜盤盤前快報（詳解）
 
 ### 為什麼看夜盤？
