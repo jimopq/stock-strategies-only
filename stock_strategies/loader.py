@@ -43,6 +43,12 @@ _PARAM_DEFAULTS: dict = {
     "weight_fundamental": 0.3,
     "weight_technical": 0.3,
     "weight_backtest": 0.4,
+    # 因子分（籌碼／成長／營收／評價）。預設關閉，開啟前後可回測比較。
+    # 啟用會讓每檔多抓 5 個資料集，首次執行較慢（之後走 parquet 快取）。
+    "use_factors": False,
+    "weight_factors": 0.0,
+    "factor_schools": None,        # None = 用 factor_score.DEFAULT_SCHOOL_WEIGHTS
+    "min_factor_coverage": 0.5,    # 有資料的派別權重需達此比例才採用
     "min_total_score_for_buy": CONFIG["min_total_score_for_buy"],
     "min_tech_score_for_buy": 50,
     # 技術訊號開關

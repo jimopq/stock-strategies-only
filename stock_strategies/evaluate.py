@@ -11,6 +11,29 @@ from .volume import detect_patterns, verdict as volume_verdict
 from .loader import merge_params
 
 
+def _factor_score(stock_id: str, params: dict, result: dict) -> Optional[dict]:
+    """算因子分。任何失敗都回 None——因子是加分項，不該讓整檔評估失敗。"""
+    try:
+        from .context import build_context
+        from .factor_score import factor_composite
+
+        ctx = build_context(stock_id, datetime.now().strftime("%Y-%m-%d"))
+        res = factor_composite(ctx, params)
+
+        # 覆蓋率太低時不採用：只有一兩派有資料就合成分數，
+        # 那個分數代表性不足，拿來加權會誤導。
+        min_cov = params.get("min_factor_coverage", 0.5)
+        if res.get("score") is None or res.get("coverage", 0) < min_cov:
+            result["risk_notes"].append(
+                f"因子資料覆蓋率僅 {res.get('coverage', 0)*100:.0f}%，未納入評分"
+            )
+            return None
+        return res
+    except Exception as e:
+        result["risk_notes"].append(f"因子計算略過: {str(e)[:60]}")
+        return None
+
+
 def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional[dict]:
     """評估一檔股票。strategy 為策略 dict（含 params），不給就用預設值。"""
     params = merge_params(strategy)
@@ -55,15 +78,29 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
         winrate = bt.get("winrate") or 0.5
         bt_score = winrate * 100
 
+        # 第四項：因子分（籌碼／成長／營收／評價）。預設關閉。
+        # build_context 會多抓 5 個資料集，成本不低，所以只在啟用時才跑。
+        factor_res = None
+        if params.get("use_factors"):
+            factor_res = _factor_score(stock_id, params, result)
+
         wf = params["weight_fundamental"]
         wt = params["weight_technical"]
         wb = params["weight_backtest"]
-        # 正規化權重
-        wsum = wf + wt + wb
-        if wsum > 0:
-            wf, wt, wb = wf / wsum, wt / wsum, wb / wsum
+        wx = params.get("weight_factors", 0.0) if (
+            factor_res and factor_res.get("score") is not None
+        ) else 0.0
 
-        signal_score = round(wf * fund_score + wt * tech_score + wb * bt_score, 1)
+        # 正規化權重。因子分取不到時 wx=0，其餘三項自動按比例補回，
+        # 不會因為缺資料就讓總分被稀釋。
+        wsum = wf + wt + wb + wx
+        if wsum > 0:
+            wf, wt, wb, wx = wf / wsum, wt / wsum, wb / wsum, wx / wsum
+
+        signal_score = wf * fund_score + wt * tech_score + wb * bt_score
+        if wx > 0:
+            signal_score += wx * (factor_res["score"] * 100)
+        signal_score = round(signal_score, 1)
 
         fund_gate = (not params["fundamental_pass_required"]) or fund_pass
         if (
@@ -124,6 +161,11 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                 "volume_details": vp["details"],
                 "volume_bonus": vp["bonus"],
                 "volume_verdict": volume_verdict(vp["patterns"]),
+                "factor_score": (
+                    round(factor_res["score"] * 100, 1) if factor_res else None
+                ),
+                "factor_detail": factor_res["detail"] if factor_res else {},
+                "factor_coverage": factor_res["coverage"] if factor_res else None,
             },
             "trend": {
                 "chg_5d": round(chg_5d, 2),

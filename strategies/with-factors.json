@@ -1,0 +1,45 @@
+{
+  "id": "with-factors",
+  "name": "含籌碼與財報因子 (V3.2 + 因子庫)",
+  "description": "在原本的基本面/技術面/回測三項之外，加入第四項『因子分』——聚合籌碼(法人連買、淨額強度、外資持股、融資退潮)、成長(EPS年增/加速、營收年增)、營收(年增加速、月增轉正、創新高)、評價(低本淨比/本益比、高殖利率)共 13 個因子。因子分佔綜合分 25%，其餘三項按比例縮放。啟用後每檔多抓 5 個資料集，首次執行較慢。",
+  "source": "default",
+  "created_at": "2026-07-22T00:00:00Z",
+  "updated_at": "2026-07-22T00:00:00Z",
+  "params": {
+    "eps_threshold": 5.0,
+    "roe_threshold": 15.0,
+    "fundamental_pass_required": true,
+
+    "backtest_years": 3,
+    "hold_days": 20,
+    "min_tech_score_for_signal": 60,
+
+    "target_return": 0.10,
+    "stop_loss": 0.08,
+
+    "weight_fundamental": 0.25,
+    "weight_technical": 0.25,
+    "weight_backtest": 0.25,
+    "weight_factors": 0.25,
+    "min_total_score_for_buy": 65,
+    "min_tech_score_for_buy": 50,
+
+    "use_factors": true,
+    "factor_schools": {
+      "chips": 0.35,
+      "growth": 0.25,
+      "revenue": 0.25,
+      "value": 0.15
+    },
+    "min_factor_coverage": 0.5,
+
+    "use_ma_alignment": true,
+    "use_bollinger_bounce": true,
+    "use_kd_golden_cross": true,
+    "use_macd_bullish": true,
+    "use_volume_patterns": true,
+
+    "market_filter_enabled": true,
+    "market_filter_ma_period": 20
+  }
+}
