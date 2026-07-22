@@ -38,7 +38,7 @@ Cloudflare Access 是在**網站前面**擋，未通過驗證根本拿不到 HTM
 
 1. 註冊 https://dash.cloudflare.com/sign-up
 2. 左側 **Workers & Pages** → **Create** → **Pages** → **Upload assets**
-3. 專案名稱填 `stock-dashboard`（要跟 workflow 裡的一致）
+3. 專案名稱填專案名稱（記下實際產生的網址，可能被加後綴）（要跟 workflow 裡的一致）
 4. 隨便上傳一個檔案建立專案即可，之後會被排程覆蓋
 
 ### 2. 取得 Account ID
@@ -79,7 +79,7 @@ CLOUDFLARE_ACCOUNT_ID=你的_account_id
    - Application name：`Stock Dashboard`
    - Session duration：`1 month`（不用每次都登入）
    - Application domain：填你的 Pages 網址
-     （例如 `stock-dashboard.pages.dev`）
+     （例如 `stock-dashboard-cij.pages.dev`）
 4. **Add policy**：
    - Policy name：`Allowed users`
    - Action：`Allow`

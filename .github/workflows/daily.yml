@@ -71,7 +71,9 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # 專案名稱即 *.pages.dev 的子網域。Cloudflare 的子網域是全域唯一，
+          # 建立時若名稱被佔用會自動加後綴，所以這裡必須跟實際網址一致。
           command: >-
             pages deploy dist
-            --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME || 'stock-dashboard' }}
+            --project-name=${{ vars.CLOUDFLARE_PROJECT_NAME || 'stock-dashboard-cij' }}
             --branch=main
