@@ -38,11 +38,20 @@ Cloudflare Access 是在**網站前面**擋，未通過驗證根本拿不到 HTM
 
 1. 註冊 https://dash.cloudflare.com/sign-up
 2. 左側 **Workers & Pages** → **Create** → **Pages** → **Upload assets**
-3. 專案名稱自訂。⚠️ `*.pages.dev` 子網域是**全域唯一**，
-   名稱被佔用時 Cloudflare 會自動加後綴——**記下實際產生的網址**，
-   workflow 的 `--project-name` 必須跟它完全一致
-   （本專案實際是 `stock-dashboard-cij`）
+3. 專案名稱自訂，例如 `stock-dashboard`
 4. 直接把本機建好的 `dist/` 拖上去，等於建立專案的同時完成第一次部署
+
+> ⚠️ **不要從網址反推專案名稱。** `*.pages.dev` 子網域是全域唯一，
+> 被佔用時 Cloudflare 只會在**子網域**加後綴，專案名稱維持你填的那個。
+> 本專案就是：專案名 `stock-dashboard`，網址 `stock-dashboard-cij.pages.dev`。
+>
+> workflow 的 `--project-name` 要填**專案名稱**。不確定就用 API 查：
+>
+> ```bash
+> curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+>   "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects" \
+>   | python3 -c "import sys,json;print([p['name'] for p in json.load(sys.stdin)['result']])"
+> ```
 
 ### 2. 取得 Account ID
 
