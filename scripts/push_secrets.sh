@@ -15,6 +15,11 @@
 
 set -euo pipefail
 
+DRY_RUN=0
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=1
+fi
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$REPO_ROOT/.env"
 
@@ -32,19 +37,57 @@ if [[ ! -f "$ENV_FILE" ]]; then
     exit 1
 fi
 
-if ! command -v gh &>/dev/null; then
-    echo "❌ 找不到 gh CLI" >&2
+# 找 gh：腳本跑在非互動 shell，不會載入 ~/.zshrc，
+# 所以不能假設使用者的 PATH 裡有 ~/.local/bin
+GH="${GH_BIN:-}"
+if [[ -z "$GH" ]]; then
+    for candidate in \
+        "$(command -v gh 2>/dev/null || true)" \
+        "$HOME/.local/bin/gh" \
+        "/opt/homebrew/bin/gh" \
+        "/usr/local/bin/gh"
+    do
+        if [[ -n "$candidate" && -x "$candidate" ]]; then
+            GH="$candidate"
+            break
+        fi
+    done
+fi
+
+if [[ -z "$GH" ]]; then
+    echo "❌ 找不到 gh CLI。" >&2
+    echo "   若已安裝，設 GH_BIN 指向它，例如：" >&2
+    echo "     GH_BIN=\$HOME/.local/bin/gh ./scripts/push_secrets.sh" >&2
     exit 1
 fi
 
-REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
-if [[ -z "$REPO" ]]; then
-    echo "❌ 無法判斷 GitHub repo，請確認目前在 repo 目錄內且已 gh auth login" >&2
+# 明確從 origin 解析目標 repo。
+# 不能用 `gh repo view` 不帶參數——在 fork 裡它會解析到 upstream，
+# 也就是原作者的 repo，等於把你的憑證往別人的 repo 送。
+ORIGIN_URL="$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || true)"
+if [[ -z "$ORIGIN_URL" ]]; then
+    echo "❌ 找不到 git remote 'origin'" >&2
+    exit 1
+fi
+# 支援 https://github.com/owner/repo(.git) 與 git@github.com:owner/repo(.git)
+REPO="$(sed -E 's#^.*github\.com[:/]##; s#\.git$##' <<< "$ORIGIN_URL")"
+
+if [[ ! "$REPO" =~ ^[^/]+/[^/]+$ ]]; then
+    echo "❌ 無法從 origin 解析 repo 名稱: $ORIGIN_URL" >&2
     exit 1
 fi
 
-VISIBILITY="$(gh repo view --json visibility -q .visibility)"
-echo "目標 repo: $REPO ($VISIBILITY)"
+VIEWER="$("$GH" api user -q .login 2>/dev/null || true)"
+REPO_OWNER="${REPO%%/*}"
+if [[ -n "$VIEWER" && "$VIEWER" != "$REPO_OWNER" ]]; then
+    echo "⚠️ 警告：origin 的擁有者是 '$REPO_OWNER'，但你登入的是 '$VIEWER'。" >&2
+    echo "   確認這是你自己的 repo 再繼續。" >&2
+    read -r -p "   仍要繼續嗎？(yes/no) " ans
+    [[ "$ans" == "yes" || "$ans" == "y" ]] || { echo "已取消。"; exit 1; }
+fi
+
+VISIBILITY="$("$GH" repo view "$REPO" --json visibility -q .visibility 2>/dev/null || echo "?")"
+echo "目標 repo: $REPO ($VISIBILITY)  ← 從 git remote origin 解析"
 echo ""
 
 failed=0
@@ -61,8 +104,13 @@ for key in "${KEYS[@]}"; do
         continue
     fi
 
+    if [[ "$DRY_RUN" == "1" ]]; then
+        echo "  🔍 $key — 已就緒，${#value} 字元（dry-run，未上傳）"
+        continue
+    fi
+
     # 用 stdin 傳值，避免出現在 process list 或 shell 歷史
-    if printf '%s' "$value" | gh secret set "$key" --repo "$REPO" --body-file - 2>/dev/null; then
+    if printf '%s' "$value" | "$GH" secret set "$key" --repo "$REPO" --body-file - 2>/dev/null; then
         echo "  ✅ $key （${#value} 字元）"
     else
         echo "  ❌ $key 上傳失敗"
@@ -71,9 +119,11 @@ for key in "${KEYS[@]}"; do
 done
 
 echo ""
-if [[ $failed -eq 0 ]]; then
+if [[ "$DRY_RUN" == "1" ]]; then
+    echo "🔍 dry-run 完成，未上傳任何東西。確認無誤後拿掉 --dry-run 再跑一次。"
+elif [[ $failed -eq 0 ]]; then
     echo "🎉 完成。確認清單："
-    gh secret list --repo "$REPO"
+    "$GH" secret list --repo "$REPO"
     echo ""
     echo "手動觸發測試： gh workflow run 'V3 Daily Signal' --repo $REPO"
 else
