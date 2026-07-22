@@ -51,6 +51,47 @@ def _load_prices(stock_id: str):
         return None
 
 
+def verify_no_secrets(out_dir: Path) -> list[str]:
+    """掃描輸出，確認沒有任何環境變數的值混進去。
+
+    這是部署前的最後一道防線：輸出會public到 GitHub Pages，
+    憑證一旦推上去就等於全網公開。與其相信「渲染程式碼不會碰到 secrets」，
+    不如每次建置都實際驗證一遍——未來任何改動意外洩漏都會讓建置失敗。
+
+    回傳外洩的環境變數名稱清單（空 = 安全）。
+    """
+    import os
+
+    # 太短的值容易誤判（例如 "1"、"true"），只檢查夠長的
+    candidates = {
+        k: v for k, v in os.environ.items()
+        if isinstance(v, str) and len(v) >= 16 and not v.startswith("your_")
+    }
+    if not candidates:
+        return []
+
+    blob = "".join(
+        p.read_text(encoding="utf-8", errors="ignore")
+        for p in out_dir.rglob("*") if p.is_file()
+    )
+
+    leaked = [k for k, v in candidates.items() if v in blob]
+
+    # GOOGLE_CREDS_JSON 內部欄位另外拆開檢查
+    creds_raw = os.environ.get("GOOGLE_CREDS_JSON", "")
+    if creds_raw.startswith("{"):
+        try:
+            creds = json.loads(creds_raw)
+            for field in ("private_key", "client_email", "private_key_id"):
+                val = creds.get(field)
+                if val and len(str(val)) >= 16 and str(val) in blob:
+                    leaked.append(f"GOOGLE_CREDS_JSON.{field}")
+        except json.JSONDecodeError:
+            pass
+
+    return leaked
+
+
 def build(data_file: Path = DATA_FILE, out_dir: Path = OUT_DIR) -> int:
     if not data_file.exists():
         print(f"❌ 找不到 {data_file}", file=sys.stderr)
@@ -110,6 +151,17 @@ def build(data_file: Path = DATA_FILE, out_dir: Path = OUT_DIR) -> int:
     total_kb = sum(f.stat().st_size for f in out_dir.rglob("*") if f.is_file()) / 1024
     print(f"  ✅ index.html + {detail_count} 個詳情頁")
     print(f"  ✅ 輸出 {out_dir}（共 {total_kb:.0f} KB）")
+
+    # 部署前最後把關：輸出會公開，絕不能含憑證
+    leaked = verify_no_secrets(out_dir)
+    if leaked:
+        print(f"\n❌ 偵測到憑證出現在輸出中: {leaked}", file=sys.stderr)
+        print("   已中止建置。輸出會被部署到公開網頁，不可含任何憑證。",
+              file=sys.stderr)
+        shutil.rmtree(out_dir, ignore_errors=True)
+        return 1
+    print("  ✅ 憑證外洩檢查通過")
+
     print(f"\n本機預覽： open {out_dir / 'index.html'}")
     return 0
 

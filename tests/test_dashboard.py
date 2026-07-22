@@ -162,3 +162,56 @@ def test_build_sorts_buy_first(tmp_path, monkeypatch):
     build(data, out)
     html = (out / "index.html").read_text(encoding="utf-8")
     assert html.index("2222") < html.index("1111")
+
+
+# ── 憑證外洩防線 ────────────────────────────────────────────
+
+def test_verify_no_secrets_passes_on_clean_output(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_FAKE_TOKEN", "supersecret-value-1234567890")
+    monkeypatch.delenv("GOOGLE_CREDS_JSON", raising=False)
+    (tmp_path / "a.html").write_text("<p>台積電 2330 分數 63.6</p>", encoding="utf-8")
+
+    from dashboard.build import verify_no_secrets
+    assert verify_no_secrets(tmp_path) == []
+
+
+def test_verify_no_secrets_detects_leaked_env_value(tmp_path, monkeypatch):
+    monkeypatch.setenv("MY_FAKE_TOKEN", "supersecret-value-1234567890")
+    monkeypatch.delenv("GOOGLE_CREDS_JSON", raising=False)
+    (tmp_path / "a.html").write_text(
+        "<p>oops supersecret-value-1234567890</p>", encoding="utf-8"
+    )
+
+    from dashboard.build import verify_no_secrets
+    assert "MY_FAKE_TOKEN" in verify_no_secrets(tmp_path)
+
+
+def test_verify_no_secrets_detects_leaked_private_key(tmp_path, monkeypatch):
+    """GOOGLE_CREDS_JSON 是整包 JSON，內部欄位要單獨比對。"""
+    monkeypatch.setenv("GOOGLE_CREDS_JSON", json.dumps({
+        "private_key": "-----BEGIN PRIVATE KEY-----AAAABBBBCCCC-----END-----",
+        "client_email": "bot@proj.iam.gserviceaccount.com",
+    }))
+    (tmp_path / "a.html").write_text(
+        "<p>bot@proj.iam.gserviceaccount.com</p>", encoding="utf-8"
+    )
+
+    from dashboard.build import verify_no_secrets
+    assert any("client_email" in x for x in verify_no_secrets(tmp_path))
+
+
+def test_build_aborts_and_removes_output_when_secret_leaks(tmp_path, monkeypatch):
+    """外洩時必須中止並刪掉輸出，不能留在磁碟上等著被部署。"""
+    monkeypatch.setattr("dashboard.build._load_prices", lambda sid: _px())
+    monkeypatch.setenv("LEAKY_VAR", "台積電-leaked-marker-0000")
+    monkeypatch.delenv("GOOGLE_CREDS_JSON", raising=False)
+
+    data = tmp_path / "d.json"
+    data.write_text(json.dumps({
+        "generated_at": GEN.isoformat(),
+        "signals": [_sig(name="台積電-leaked-marker-0000")],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    out = tmp_path / "out"
+    assert build(data, out) == 1
+    assert not out.exists()
