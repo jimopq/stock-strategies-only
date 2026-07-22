@@ -34,7 +34,8 @@ def _allowed(chat_id: str, owner: str) -> bool:
     return str(chat_id) == str(owner)
 
 
-def handle_message(msg: dict, brain: Brain | None, tg: TelegramClient, owner: str) -> None:
+def handle_message(msg: dict, brain: Brain | None, tg: TelegramClient, owner: str,
+                   scanner=None) -> None:
     chat_id = str(msg.get("chat", {}).get("id", ""))
     text = (msg.get("text") or "").strip()
     if not text:
@@ -53,6 +54,20 @@ def handle_message(msg: dict, brain: Brain | None, tg: TelegramClient, owner: st
         if brain:
             brain.reset(chat_id)
         tg.send_message(chat_id, "🧹 對話記憶已清空。")
+        return
+
+    # /scan 需要 scanner 實例，單獨處理
+    if text.split("@")[0].lower() == "/scan":
+        if scanner is None:
+            tg.send_message(chat_id, "盤中掃描未啟用。")
+            return
+        tg.send_message(chat_id, "📡 掃描中，約需 1-2 分鐘…")
+        try:
+            n = scanner.run_once()
+            if n == 0:
+                tg.send_message(chat_id, "掃描完成，相對收盤基準沒有變化。")
+        except Exception as e:
+            tg.send_message(chat_id, f"❌ 掃描失敗：{str(e)[:200]}", markdown=False)
         return
 
     try:
@@ -119,6 +134,20 @@ def main() -> None:
     except Exception as e:
         _log(f"⚠️ 持倉監控啟動失敗（不影響聊天）: {e}")
 
+    scanner = None
+    try:
+        from .monitor import IntradayScanner
+
+        scanner = IntradayScanner(
+            send=tg.send_message,
+            chat_id=owner,
+            interval=int(os.environ.get("SCAN_INTERVAL", 1800)),
+            log=_log,
+        )
+        scanner.start()
+    except Exception as e:
+        _log(f"⚠️ 盤中掃描啟動失敗（不影響其他功能）: {e}")
+
     tg.delete_webhook()
 
     # 跳過啟動前累積的舊訊息，避免一開機就回覆一堆歷史訊息
@@ -165,7 +194,7 @@ def main() -> None:
             if not msg:
                 continue
             try:
-                handle_message(msg, brain, tg, owner)
+                handle_message(msg, brain, tg, owner, scanner)
             except KeyboardInterrupt:
                 raise
             except Exception as e:
@@ -173,6 +202,8 @@ def main() -> None:
 
     if monitor:
         monitor.stop()
+    if scanner:
+        scanner.stop()
     _log("👋 已停止")
 
 

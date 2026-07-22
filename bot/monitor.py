@@ -164,3 +164,71 @@ class PositionMonitor:
         if sent:
             self.log(f"📡 發出 {sent} 則持倉警報")
         return sent
+
+
+class IntradayScanner:
+    """盤中訊號預覽排程（與持倉監控分開，因為兩者的節奏與目的不同）。
+
+    持倉監控要快（60 秒）——停損晚一分鐘都是錢。
+    訊號預覽要慢（30 分鐘）——它本來就是雜訊偏高的參考資訊，
+    掃太密只會製造焦慮，而且今日 K 棒還在變，短時間內反覆跳動沒有意義。
+    """
+
+    DEFAULT_INTERVAL = 1800   # 30 分鐘
+
+    def __init__(self, send, chat_id, interval: int = DEFAULT_INTERVAL, log=print):
+        self.send = send
+        self.chat_id = chat_id
+        self.interval = interval
+        self.log = log
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        self.log(f"📡 盤中訊號預覽已啟動（每 {self.interval // 60} 分鐘掃描一次）")
+        while not self._stop.is_set():
+            try:
+                if quotes.is_market_open():
+                    self.run_once()
+            except Exception as e:
+                self.log(f"⚠️ 盤中掃描異常: {str(e)[:150]}")
+            self._stop.wait(self.interval)
+
+    def run_once(self) -> int:
+        """跑一次掃描，回傳變化檔數。有變化才推播。"""
+        from datetime import datetime
+
+        from . import intraday
+
+        baseline = intraday.load_baseline()
+        if not baseline:
+            self.log("⚠️ 尚無收盤基準資料，盤中掃描略過")
+            return 0
+
+        def loader(sid):
+            from stock_strategies.data import get_price_history
+            try:
+                return get_price_history(sid, 1)
+            except Exception:
+                return None
+
+        today = datetime.now(quotes.TPE).strftime("%Y-%m-%d")
+        result = intraday.scan(baseline, loader, today)
+
+        msg = intraday.format_scan(result)
+        n = len(result.get("changes") or [])
+        if msg:
+            self.send(self.chat_id, msg)
+            self.log(f"📡 盤中掃描：{result.get('scanned')} 檔，{n} 檔有變化，已推播")
+        else:
+            self.log(f"📡 盤中掃描：{result.get('scanned')} 檔，無變化")
+        return n
