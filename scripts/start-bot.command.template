@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+#
+# 桌面捷徑：啟動 Telegram 聊天機器人 + 盤中監控。
+#
+# 這個視窗關掉 = 機器人停止。
+# 每日定時推播不受影響（跑在 GitHub 上）。
+
+REPO="$HOME/Desktop/金融工具/stock-strategies-only"
+export PATH="$HOME/.local/bin:$PATH"
+
+cd "$REPO" 2>/dev/null || {
+    echo "❌ 找不到專案資料夾：$REPO"
+    echo "   如果搬動過位置，請編輯這個檔案裡的 REPO 路徑。"
+    echo ""
+    read -r -p "按 Enter 關閉..."
+    exit 1
+}
+
+[[ -t 1 && -n "${TERM:-}" ]] && clear
+cat <<'BANNER'
+════════════════════════════════════════════════
+  台股訊號機器人
+════════════════════════════════════════════════
+
+  Telegram: @twstock999bot
+
+  可以做什麼
+    /signal 2330    單檔訊號（約 10-30 秒）
+    /market         大盤 + 夜盤
+    /watchlist      觀察名單
+    /positions      持倉與損益
+    /help           全部指令
+    也可以直接用中文問問題
+
+  盤中會自動監控（週一至五 09:00-13:30）
+    · 持倉停損停利警報　每 60 秒
+    · 訊號預覽　　　　　每 30 分鐘
+
+  ⚠️ 關掉這個視窗 = 機器人停止
+     每日定時推播不受影響（跑在 GitHub 上）
+
+════════════════════════════════════════════════
+
+BANNER
+
+# 同時只能有一個實例：Telegram 不允許兩個程式同時收訊
+if pgrep -f "bot\.run" >/dev/null 2>&1; then
+    echo "⚠️ 偵測到機器人已經在執行中。"
+    echo "   同時開兩個會互搶訊息，Telegram 會回 Conflict。"
+    echo ""
+    read -r -p "要結束舊的、改由這個視窗接管嗎？(yes/no) " ans
+    if [[ "$ans" == "yes" || "$ans" == "y" ]]; then
+        pkill -f "bot\.run"
+        sleep 2
+        echo "已結束舊的實例。"
+        echo ""
+    else
+        echo "已取消。"
+        read -r -p "按 Enter 關閉..."
+        exit 0
+    fi
+fi
+
+uv run python -m bot.run
+
+echo ""
+echo "════════════════════════════════════════════════"
+echo "機器人已停止。"
+read -r -p "按 Enter 關閉視窗..."
