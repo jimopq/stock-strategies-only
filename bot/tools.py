@@ -6,9 +6,13 @@
 
 讀寫分離原則：只有唯讀查詢 + 新增觀察名單開放給 LLM 自動呼叫；
 刪除這種破壞性操作只走 /remove 指令，不讓模型自己決定。
-"""
 
-from __future__ import annotations
+⚠️ 這個模組**不可以**加 `from __future__ import annotations`。
+那會讓型別註記在執行期變成字串，而 google-genai 的自動函式呼叫會做
+`isinstance(value, annotation)` 檢查參數，拿到字串就會拋
+「isinstance() arg 2 must be a type」，而且錯誤會被 SDK 包成工具回傳值，
+表面上看起來像是股票查不到，非常難查。見 tests/test_bot.py 的迴歸測試。
+"""
 
 import math
 

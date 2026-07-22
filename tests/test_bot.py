@@ -122,6 +122,50 @@ def test_jsonable_recurses_into_nested_structures():
     assert out == {"lvl1": [{"lvl2": 2.0}]}
 
 
+# ── LLM 工具的執行期型別註記 ────────────────────────────────
+
+def test_tool_annotations_are_real_types_not_strings():
+    """工具的參數註記在執行期必須是真的型別，不能是字串。
+
+    若 bot/tools.py 加了 `from __future__ import annotations`，註記會變成
+    字串，google-genai 的 isinstance(value, annotation) 檢查就會拋
+    「isinstance() arg 2 must be a type」。該錯誤會被 SDK 包成工具的回傳值，
+    使用者只會看到「查詢失敗」，極難追查——所以用測試釘住。
+    """
+    import inspect
+
+    for fn in tools.LLM_TOOLS:
+        for pname, param in inspect.signature(fn).parameters.items():
+            ann = param.annotation
+            assert ann is not inspect.Parameter.empty, (
+                f"{fn.__name__} 的參數 {pname} 缺少型別註記"
+            )
+            assert not isinstance(ann, str), (
+                f"{fn.__name__} 的參數 {pname} 註記是字串 {ann!r}——"
+                "bot/tools.py 不可使用 from __future__ import annotations"
+            )
+            # 確認真的能拿來做 isinstance（SDK 就是這樣用的）
+            isinstance("probe", ann)
+
+
+def test_tools_module_has_no_future_annotations_import():
+    """直接檢查原始碼，把規則講得更明確。
+
+    只比對真正的 import 述句（行首），docstring 裡提到這個字串不算。
+    """
+    from pathlib import Path
+
+    src = Path(tools.__file__).read_text()
+    offending = [
+        line for line in src.splitlines()
+        if line.strip().startswith("from __future__ import")
+        and "annotations" in line
+    ]
+    assert not offending, (
+        f"bot/tools.py 不可使用 {offending}，會破壞 google-genai 的自動函式呼叫"
+    )
+
+
 # ── 股號 / 股名解析 ─────────────────────────────────────────
 
 @pytest.fixture

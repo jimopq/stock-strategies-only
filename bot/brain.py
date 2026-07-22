@@ -8,6 +8,7 @@ SDK 會執行並把結果餵回去，最後產出自然語言回答。
 from __future__ import annotations
 
 import os
+import re
 import sys
 
 from google import genai
@@ -98,6 +99,17 @@ class Brain:
             model=self.model, config=self._config(), history=kept
         )
 
+    @staticmethod
+    def _retry_seconds(msg: str) -> int | None:
+        """從 429 錯誤訊息裡撈出建議等待秒數。"""
+        m = re.search(r"retryDelay['\"]?:\s*['\"]?(\d+)", msg)
+        if m:
+            return int(m.group(1))
+        m = re.search(r"retry in ([\d.]+)s", msg)
+        if m:
+            return int(float(m.group(1))) + 1
+        return None
+
     def ask(self, chat_id: str, text: str) -> str:
         """送一則使用者訊息，回傳模型的自然語言答覆。"""
         chat_id = str(chat_id)
@@ -109,11 +121,25 @@ class Brain:
             if not answer:
                 return "⚠️ 模型沒有回傳內容，換個問法再試一次？"
             return answer
+
         except Exception as e:
-            print(f"⚠️ Gemini 呼叫失敗: {e}", file=sys.stderr)
-            # 對話可能已經壞掉（例如工具回傳無法序列化），重開一個
+            msg = str(e)
+            print(f"⚠️ Gemini 呼叫失敗: {msg[:300]}", file=sys.stderr)
+
+            # 免費層每分鐘僅 5 次請求，一個要查兩檔股票的問題就可能撞到。
+            # 這是暫時性的，不要重置對話記憶。
+            if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                wait = self._retry_seconds(msg)
+                hint = f"約 {wait} 秒後" if wait else "稍等一分鐘後"
+                return (
+                    f"⏳ *Gemini 免費額度暫時用完了*（每分鐘 5 次請求）\n\n"
+                    f"請在{hint}再問一次。\n"
+                    f"急著查單檔可以改用指令，那不經過 AI：`/signal 2330`"
+                )
+
+            # 其他錯誤：對話可能已經壞掉（例如工具回傳無法序列化），重開一個
             self.reset(chat_id)
-            return f"⚠️ AI 回覆失敗：{str(e)[:200]}\n\n對話記憶已重置，請再試一次。"
+            return f"⚠️ AI 回覆失敗：{msg[:200]}\n\n對話記憶已重置，請再試一次。"
 
     def summarize_signals(self, payload: str) -> str:
         """給每日推播用的一次性摘要（不帶對話歷史、不用工具）。"""
