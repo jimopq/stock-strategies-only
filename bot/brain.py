@@ -15,7 +15,9 @@ from google.genai import types
 
 from .tools import LLM_TOOLS
 
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+# gemini-2.5-flash 雖然還在 models.list() 裡，但新申請的 key 呼叫會回 404
+# （"no longer available to new users"），所以預設用 3.6-flash。
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 SYSTEM_PROMPT = """你是一個台股訊號分析助理，接在一套量化選股系統上。
 

@@ -28,7 +28,7 @@ npm run dev
 | 變數 | 必填 | 說明 |
 | --- | --- | --- |
 | `GEMINI_API_KEY` | AI 頁要用 | Google AI Studio 申請 |
-| `GEMINI_MODEL` |  | 預設 `gemini-2.5-flash` |
+| `GEMINI_MODEL` |  | 預設 `gemini-3.6-flash` |
 | `CORS_ORIGINS` |  | 預設 `http://localhost:3000` |
 | `STRATEGY_DIR` |  | 策略 JSON 存放目錄，預設 `./strategies` |
 | `NEXT_PUBLIC_API_BASE` |  | 前端打 API 的 base，預設 `http://localhost:8000` |

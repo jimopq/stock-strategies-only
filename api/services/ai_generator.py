@@ -11,7 +11,7 @@ from stock_strategies import loader
 
 
 # 預設用 Gemini 2.5 Flash；可用 GEMINI_MODEL 環境變數覆寫
-DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+DEFAULT_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 
 SYSTEM_PROMPT = """你是台股量化選股策略設計師。使用者會用自然語言描述他想要的選股風格，
