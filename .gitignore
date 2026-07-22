@@ -11,7 +11,10 @@ wheels/
 
 # Environment variables and credentials
 .env
+.env.*
+!.env.example
 *.json.key
+*-gcp-key.json
 speech-to-text-*.json
 *-credentials.json
 *-service-account.json
