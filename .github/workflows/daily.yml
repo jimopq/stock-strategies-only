@@ -5,6 +5,11 @@ on:
     # Taiwan time 14:30 = UTC 06:30, after market close.
     - cron: "30 6 * * 1-5"
   workflow_dispatch:
+    inputs:
+      limit:
+        description: "只掃前 N 檔（測試部署流程用，留空=掃全部）"
+        required: false
+        default: ""
 
 jobs:
   run-signal:
@@ -32,7 +37,12 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: uv run python main.py
+        run: |
+          if [ -n "${{ inputs.limit }}" ]; then
+            uv run python main.py --limit "${{ inputs.limit }}"
+          else
+            uv run python main.py
+          fi
 
       # 接在訊號引擎之後跑，此時 parquet 快取是熱的，
       # 讀價格畫 K 線不需要再打 FinMind。
