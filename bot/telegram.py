@@ -91,24 +91,52 @@ class TelegramClient:
         return data.get("result", [])
 
     # ── 送 ──
-    def send_message(self, chat_id: str | int, text: str, markdown: bool = True) -> bool:
+    def set_my_commands(self, commands: list[tuple[str, str]]) -> bool:
+        """註冊指令選單：使用者打 `/` 或點選單鈕就會看到清單與說明。
+
+        一般人不會記指令，這是 Telegram 原生的探索機制，比寫在說明裡有效。
+        """
+        payload = {
+            "commands": [{"command": c, "description": d} for c, d in commands]
+        }
+        data = self._call("setMyCommands", payload)
+        if not data.get("ok"):
+            print(f"⚠️ 指令選單註冊失敗: {data.get('description')}", file=sys.stderr)
+        return bool(data.get("ok"))
+
+    def set_menu_button(self) -> None:
+        """把輸入框旁的選單鈕設成指令列表（預設可能是空的）。"""
+        try:
+            self._call("setChatMenuButton", {"menu_button": {"type": "commands"}})
+        except requests.exceptions.RequestException:
+            pass
+
+    def send_message(self, chat_id: str | int, text: str, markdown: bool = True,
+                     reply_markup: dict | None = None) -> bool:
         """送訊息。過長自動分段；Markdown 解析失敗自動改送純文字。
 
         LLM 產生的內容常有不成對的 * 或 _，Telegram 會直接回 400，
         所以這裡一定要有降級路徑，不然使用者只會看到機器人沉默。
         """
         ok = True
-        for chunk in _split(text):
+        chunks = _split(text)
+        for i, chunk in enumerate(chunks):
             payload = {"chat_id": chat_id, "text": chunk}
             if markdown:
                 payload["parse_mode"] = "Markdown"
+            # 鍵盤只掛在最後一段，否則每段都會重畫一次
+            if reply_markup and i == len(chunks) - 1:
+                payload["reply_markup"] = reply_markup
             data = self._call("sendMessage", payload)
 
             if not data.get("ok") and markdown:
                 desc = str(data.get("description", ""))
                 if "parse" in desc.lower() or "entity" in desc.lower():
                     # Markdown 壞掉 → 純文字重送
-                    data = self._call("sendMessage", {"chat_id": chat_id, "text": chunk})
+                    retry = {"chat_id": chat_id, "text": chunk}
+                    if reply_markup and i == len(chunks) - 1:
+                        retry["reply_markup"] = reply_markup
+                    data = self._call("sendMessage", retry)
 
             if not data.get("ok"):
                 print(f"⚠️ sendMessage 失敗: {data.get('description')}", file=sys.stderr)

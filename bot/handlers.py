@@ -20,6 +20,11 @@ HELP = """🤖 *台股訊號 AI 助理*
 • 我的觀察名單裡哪幾檔分數最高？
 • 這系統過去勝率如何？
 
+*不用記指令*
+• 點輸入框下方的按鈕
+• 或打 `/` 會跳出完整選單
+• 只打股號也可以，例如 `2330`
+
 *快速指令*
 /signal <股號或股名> — 跑單檔完整訊號
 /market — 大盤 + 夜盤狀態
@@ -270,6 +275,62 @@ def cmd_perf() -> str:
     ])
 
 
+
+# ── Telegram 原生介面 ───────────────────────────────────────
+# 一般人不會記指令。這兩個是 Telegram 內建的探索機制，
+# 比把指令寫在說明文字裡有效得多。
+
+# 打 `/` 或點輸入框旁的選單鈕時顯示
+BOT_COMMANDS = [
+    ("signal", "查單檔訊號　例：/signal 2330"),
+    ("market", "大盤與夜盤狀況"),
+    ("watchlist", "觀察名單"),
+    ("positions", "我的持倉與損益"),
+    ("perf", "系統歷史績效"),
+    ("buy", "記錄持倉　例：/buy 2330 2400 2"),
+    ("sell", "記錄出場　例：/sell 2330 2450"),
+    ("add", "加入觀察名單　例：/add 2330"),
+    ("remove", "移出觀察名單　例：/remove 2330"),
+    ("scan", "立即跑一次盤中掃描"),
+    ("reset", "清空 AI 對話記憶"),
+    ("help", "使用說明"),
+]
+
+# 輸入框下方的常駐按鈕——完全不用打字
+KEYBOARD = {
+    "keyboard": [
+        [{"text": "📊 大盤"}, {"text": "📋 觀察名單"}],
+        [{"text": "💼 我的持倉"}, {"text": "📈 系統績效"}],
+        [{"text": "🔍 查個股"}, {"text": "❓ 說明"}],
+    ],
+    "resize_keyboard": True,      # 不要佔掉半個螢幕
+    "is_persistent": True,        # 收合後仍可再叫出來
+}
+
+# 按鈕文字 → 對應指令
+BUTTON_MAP = {
+    "📊 大盤": "/market",
+    "📋 觀察名單": "/watchlist",
+    "💼 我的持倉": "/positions",
+    "📈 系統績效": "/perf",
+    "❓ 說明": "/help",
+    "🔍 查個股": "__ask_stock__",
+}
+
+ASK_STOCK = """🔍 *查個股*
+
+直接輸入股號或股名就可以，例如：
+
+`2330`　　`台積電`　　`/signal 2317`
+
+_也可以直接問問題，像是「台積電現在可以買嗎」_"""
+
+
+def resolve_button(text: str) -> str | None:
+    """把按鈕文字轉成指令。不是按鈕就回 None。"""
+    return BUTTON_MAP.get(text.strip())
+
+
 # 指令名稱 → (處理函式, 是否吃參數)
 COMMANDS = {
     "start": (lambda a: cmd_start(), False),
@@ -287,7 +348,21 @@ COMMANDS = {
 
 
 def dispatch(text: str) -> str | None:
-    """是斜線指令就處理並回傳字串；不是就回 None（交給 AI）。"""
+    """是斜線指令或按鈕就處理並回傳字串；不是就回 None（交給 AI）。"""
+    text = text.strip()
+
+    # 常駐按鈕
+    mapped = resolve_button(text)
+    if mapped == "__ask_stock__":
+        return ASK_STOCK
+    if mapped:
+        text = mapped
+
+    # 只打股號（例如「2330」）視為查訊號——這是最常見的用法，
+    # 讓它不必經過 LLM，快又不耗額度
+    if text.isdigit() and 4 <= len(text) <= 6:
+        return cmd_signal(text)
+
     if not text.startswith("/"):
         return None
 

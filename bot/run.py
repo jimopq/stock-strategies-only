@@ -53,7 +53,7 @@ def handle_message(msg: dict, brain: Brain | None, tg: TelegramClient, owner: st
     if text.split("@")[0].lower() in ("/reset", "/reset "):
         if brain:
             brain.reset(chat_id)
-        tg.send_message(chat_id, "🧹 對話記憶已清空。")
+        tg.send_message(chat_id, "🧹 對話記憶已清空。", reply_markup=handlers.KEYBOARD)
         return
 
     # /scan 需要 scanner 實例，單獨處理
@@ -88,7 +88,7 @@ def handle_message(msg: dict, brain: Brain | None, tg: TelegramClient, owner: st
         reply = brain.ask(chat_id, text)
 
     _log(f"→ {reply[:60].replace(chr(10), ' ')}")
-    tg.send_message(chat_id, reply)
+    tg.send_message(chat_id, reply, reply_markup=handlers.KEYBOARD)
 
 
 def main() -> None:
@@ -147,6 +147,14 @@ def main() -> None:
         scanner.start()
     except Exception as e:
         _log(f"⚠️ 盤中掃描啟動失敗（不影響其他功能）: {e}")
+
+    # 註冊指令選單與選單鈕：使用者打 `/` 就看得到清單，不必記
+    try:
+        if tg.set_my_commands(handlers.BOT_COMMANDS):
+            _log(f"⌨️  指令選單已註冊（{len(handlers.BOT_COMMANDS)} 項）")
+        tg.set_menu_button()
+    except Exception as e:
+        _log(f"⚠️ 指令選單註冊失敗（不影響功能）: {e}")
 
     tg.delete_webhook()
 
