@@ -109,11 +109,13 @@ for key in "${KEYS[@]}"; do
         continue
     fi
 
-    # 用 stdin 傳值，避免出現在 process list 或 shell 歷史
-    if printf '%s' "$value" | "$GH" secret set "$key" --repo "$REPO" --body-file - 2>/dev/null; then
+    # 不帶 --body 時 gh 會從 stdin 讀值，這樣值不會出現在
+    # process list 或 shell 歷史。用 printf '%s' 避免多帶換行。
+    # 錯誤訊息保留輸出——吞掉會讓失敗完全無法診斷。
+    if err="$(printf '%s' "$value" | "$GH" secret set "$key" --repo "$REPO" 2>&1)"; then
         echo "  ✅ $key （${#value} 字元）"
     else
-        echo "  ❌ $key 上傳失敗"
+        echo "  ❌ $key 上傳失敗: $err"
         failed=1
     fi
 done
