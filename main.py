@@ -47,7 +47,7 @@ REQUIRED_ENV = [
 ]
 
 
-def main():
+def main(limit: int | None = None):
     missing = [k for k in REQUIRED_ENV if not os.environ.get(k)]
     if missing:
         print(f"❌ 缺少環境變數: {missing}", file=sys.stderr)
@@ -57,6 +57,10 @@ def main():
     print(f"[{datetime.now()}] 讀取 watchlist...")
     watchlist = read_watchlist()
     print(f"  → {len(watchlist)} 檔啟用中")
+
+    if limit:
+        watchlist = watchlist[:limit]
+        print(f"  ⚠️ 已限制只掃描前 {len(watchlist)} 檔（--limit）")
 
     # 2. 取得大盤狀態（濾鏡）
     print("取得大盤狀態...")
@@ -162,4 +166,11 @@ def _format_perf_message(stats: dict) -> str:
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    ap = argparse.ArgumentParser(description="V3.2 每日選股訊號系統")
+    ap.add_argument(
+        "--limit", type=int, default=None,
+        help="只掃描 watchlist 前 N 檔（首次驗證流程用，正式排程不要帶）",
+    )
+    main(limit=ap.parse_args().limit)
