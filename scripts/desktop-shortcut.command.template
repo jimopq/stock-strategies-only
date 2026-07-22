@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+#
+# 桌面捷徑：把 .env 的憑證同步到 GitHub Actions Secrets。
+# 每次修改 .env（換 token、加朋友的 chat id）之後跑這個。
+
+REPO="$HOME/Desktop/金融工具/stock-strategies-only"
+
+cd "$REPO" 2>/dev/null || {
+    echo "❌ 找不到專案資料夾：$REPO"
+    echo "   如果你搬動過位置，請編輯這個 .command 檔裡的 REPO 路徑。"
+    echo ""
+    read -r -p "按 Enter 關閉..."
+    exit 1
+}
+
+[[ -t 1 && -n "${TERM:-}" ]] && clear
+echo "════════════════════════════════════════════════"
+echo "  同步 .env 憑證到 GitHub Actions Secrets"
+echo "════════════════════════════════════════════════"
+echo ""
+echo "專案：$REPO"
+echo ""
+
+# 先跑 dry-run，讓使用者確認目標 repo 正確再上傳
+echo "── 步驟 1：確認要上傳什麼、送到哪裡 ──"
+echo ""
+./scripts/push_secrets.sh --dry-run
+echo ""
+
+echo "── 步驟 2：確認 ──"
+echo ""
+read -r -p "以上正確嗎？輸入 yes 開始上傳（其他任意鍵取消）: " ans
+echo ""
+
+if [[ "$ans" == "yes" || "$ans" == "y" ]]; then
+    ./scripts/push_secrets.sh
+else
+    echo "已取消，未上傳任何東西。"
+fi
+
+echo ""
+echo "════════════════════════════════════════════════"
+read -r -p "按 Enter 關閉視窗..."
