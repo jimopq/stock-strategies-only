@@ -8,16 +8,50 @@ import requests
 from .config import CONFIG, TELEGRAM_API
 
 
+def get_recipients() -> list[str]:
+    """推播對象清單：擁有者 + TELEGRAM_BROADCAST_IDS 裡的其他人。
+
+    TELEGRAM_BROADCAST_IDS 用逗號分隔，例如 "123456789,987654321"。
+    這些人只會收到報告，不能對機器人下指令（那由 bot/run.py 另外把關），
+    所以他們不會消耗 Gemini 額度、也改不到觀察名單。
+    """
+    ids = [os.environ.get("TELEGRAM_CHAT_ID", "").strip()]
+    extra = os.environ.get("TELEGRAM_BROADCAST_IDS", "")
+    ids += [x.strip() for x in extra.split(",")]
+
+    seen, out = set(), []
+    for i in ids:
+        if i and i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
 def send_telegram(text: str):
+    """推播給所有收件人。
+
+    單一收件人失敗不影響其他人——朋友沒先跟機器人對話過時，
+    Telegram 會回 403（bot 無法主動發起對話），不該讓整批推播中斷。
+    """
     url = TELEGRAM_API.format(token=os.environ["TELEGRAM_BOT_TOKEN"])
-    payload = {
-        "chat_id": os.environ["TELEGRAM_CHAT_ID"],
-        "text": text,
-        "parse_mode": "Markdown",
-    }
-    r = requests.post(url, json=payload, timeout=10)
-    if not r.ok:
-        print(f"Telegram 送失敗: {r.text}", file=sys.stderr)
+    recipients = get_recipients()
+
+    for chat_id in recipients:
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+        except requests.exceptions.RequestException as e:
+            print(f"Telegram 送失敗 (chat_id={chat_id}): {e}", file=sys.stderr)
+            continue
+
+        if not r.ok:
+            hint = ""
+            if '"error_code":403' in r.text or "can't initiate" in r.text:
+                hint = "（該用戶需先主動傳訊息給機器人一次）"
+            print(
+                f"Telegram 送失敗 (chat_id={chat_id}){hint}: {r.text}",
+                file=sys.stderr,
+            )
 
 
 def _trend_emoji(chg: float) -> str:

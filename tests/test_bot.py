@@ -253,3 +253,44 @@ def test_cmd_watchlist_handles_empty(monkeypatch):
 def test_cmd_perf_handles_no_data(monkeypatch):
     monkeypatch.setattr(tools, "get_performance_summary", lambda: {"count": 0})
     assert "尚未有完成追蹤" in handlers.cmd_perf()
+
+
+# ── 多人推播 ────────────────────────────────────────────────
+
+def test_recipients_defaults_to_owner_only(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "111")
+    monkeypatch.delenv("TELEGRAM_BROADCAST_IDS", raising=False)
+    from stock_strategies.notify import get_recipients
+
+    assert get_recipients() == ["111"]
+
+
+def test_recipients_includes_broadcast_ids(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "111")
+    monkeypatch.setenv("TELEGRAM_BROADCAST_IDS", "222,333")
+    from stock_strategies.notify import get_recipients
+
+    assert get_recipients() == ["111", "222", "333"]
+
+
+def test_recipients_tolerates_spaces_and_trailing_commas(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "111")
+    monkeypatch.setenv("TELEGRAM_BROADCAST_IDS", " 222 , 333 , ")
+    from stock_strategies.notify import get_recipients
+
+    assert get_recipients() == ["111", "222", "333"]
+
+
+def test_recipients_deduplicates_owner(monkeypatch):
+    """擁有者若也被寫進廣播清單，不該收到兩次。"""
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "111")
+    monkeypatch.setenv("TELEGRAM_BROADCAST_IDS", "111,222")
+    from stock_strategies.notify import get_recipients
+
+    assert get_recipients() == ["111", "222"]
+
+
+def test_broadcast_recipients_still_cannot_command_bot():
+    """收報告的人不該能對機器人下指令，否則會燒額度、改到觀察名單。"""
+    assert _allowed("111", "111")
+    assert not _allowed("222", "111")
