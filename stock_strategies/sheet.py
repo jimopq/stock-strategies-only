@@ -193,3 +193,109 @@ def write_performance(records: list[dict]):
 
     rows = [[r.get(h, "") for h in PERFORMANCE_HEADERS] for r in records]
     ws.append_rows(rows)
+
+
+# ── Trades（個人持倉紀錄，供盤中停損停利監控用）──────────────
+
+TRADE_HEADERS = [
+    "trade_id", "open_date", "stock_id", "name", "shares",
+    "entry_price", "stop_price", "target_price",
+    "status", "close_date", "close_price", "pnl_pct", "alerted",
+]
+
+
+def _trades_ws():
+    """取 Trades 分頁，不存在就建好表頭。"""
+    sh = get_gsheet()
+    try:
+        return sh.worksheet("Trades")
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Trades", rows=1000, cols=len(TRADE_HEADERS))
+        ws.append_row(TRADE_HEADERS)
+        return ws
+
+
+def read_trades(open_only: bool = False) -> list[dict]:
+    """讀交易紀錄。open_only=True 只回持有中的部位。"""
+    ws = _trades_ws()
+    rows = ws.get_all_records()
+    if open_only:
+        rows = [r for r in rows if str(r.get("status", "")).strip() == "持有中"]
+    return rows
+
+
+def add_trade(
+    stock_id: str, name: str, shares: float, entry_price: float,
+    stop_price: float, target_price: float,
+) -> dict:
+    """新增一筆持倉。trade_id 用時間戳，確保同一檔可重複進出場。"""
+    from datetime import datetime
+
+    ws = _trades_ws()
+    now = datetime.now()
+    trade_id = now.strftime("%Y%m%d%H%M%S")
+    ws.append_row([
+        trade_id, now.strftime("%Y-%m-%d"), str(stock_id), name, shares,
+        entry_price, stop_price, target_price,
+        "持有中", "", "", "", "",
+    ])
+    return {"trade_id": trade_id, "stock_id": str(stock_id), "name": name}
+
+
+def _find_trade_row(ws, trade_id: str = "", stock_id: str = "") -> int | None:
+    """回 gspread 的列號（1-based，含表頭）。優先用 trade_id，其次用股號找持有中的。"""
+    rows = ws.get_all_records()
+    for i, r in enumerate(rows, start=2):
+        if trade_id and str(r.get("trade_id", "")).strip() == str(trade_id):
+            return i
+        if (not trade_id and stock_id
+                and str(r.get("stock_id", "")).strip() == str(stock_id)
+                and str(r.get("status", "")).strip() == "持有中"):
+            return i
+    return None
+
+
+def close_trade(stock_id: str, close_price: float, trade_id: str = "") -> dict:
+    """出場：填出場價、算報酬率、狀態改為已出場。"""
+    from datetime import datetime
+
+    ws = _trades_ws()
+    row = _find_trade_row(ws, trade_id, stock_id)
+    if row is None:
+        return {"ok": False, "message": f"找不到 {stock_id} 的持有中部位"}
+
+    headers = ws.row_values(1)
+    rec = dict(zip(headers, ws.row_values(row)))
+    try:
+        entry = float(rec.get("entry_price") or 0)
+    except (TypeError, ValueError):
+        entry = 0
+    pnl = round((close_price / entry - 1) * 100, 2) if entry > 0 else ""
+
+    for col_name, value in [
+        ("status", "已出場"),
+        ("close_date", datetime.now().strftime("%Y-%m-%d")),
+        ("close_price", close_price),
+        ("pnl_pct", pnl),
+    ]:
+        if col_name in headers:
+            ws.update_cell(row, headers.index(col_name) + 1, value)
+
+    return {"ok": True, "stock_id": stock_id, "name": rec.get("name", ""),
+            "entry_price": entry, "close_price": close_price, "pnl_pct": pnl}
+
+
+def mark_trade_alerted(trade_id: str, kind: str) -> None:
+    """標記已警報，避免機器人重啟後重複推播同一個事件。"""
+    ws = _trades_ws()
+    row = _find_trade_row(ws, trade_id=trade_id)
+    if row is None:
+        return
+    headers = ws.row_values(1)
+    if "alerted" not in headers:
+        return
+    col = headers.index("alerted") + 1
+    prev = ws.cell(row, col).value or ""
+    kinds = {k for k in prev.split(",") if k}
+    kinds.add(kind)
+    ws.update_cell(row, col, ",".join(sorted(kinds)))

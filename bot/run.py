@@ -103,6 +103,22 @@ def main() -> None:
         print(f"❌ {e}", file=sys.stderr)
         sys.exit(1)
 
+    # 盤中持倉監控：補上「訊號引擎只管進場不管出場」的缺口。
+    # 掛在同一支常駐程式裡——機器人開著就有監控，不為此多養一台主機。
+    monitor = None
+    try:
+        from .monitor import PositionMonitor
+
+        monitor = PositionMonitor(
+            send=tg.send_message,
+            chat_id=owner,
+            interval=int(os.environ.get("MONITOR_INTERVAL", 60)),
+            log=_log,
+        )
+        monitor.start()
+    except Exception as e:
+        _log(f"⚠️ 持倉監控啟動失敗（不影響聊天）: {e}")
+
     tg.delete_webhook()
 
     # 跳過啟動前累積的舊訊息，避免一開機就回覆一堆歷史訊息
@@ -155,6 +171,8 @@ def main() -> None:
             except Exception as e:
                 _log(f"⚠️ 處理訊息失敗: {e}")
 
+    if monitor:
+        monitor.stop()
     _log("👋 已停止")
 
 

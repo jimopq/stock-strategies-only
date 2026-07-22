@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from stock_strategies import sheet
+from stock_strategies.config import CONFIG
 from stock_strategies.notify import _format_stock_detail, _explain_why
 
 from . import tools
@@ -26,6 +27,13 @@ HELP = """🤖 *台股訊號 AI 助理*
 /add <股號或股名> — 加入觀察名單
 /remove <股號> — 移出觀察名單
 /perf — 系統歷史績效
+
+*持倉管理*（盤中自動監控停損停利）
+/buy <股號> <買進價> [張數] — 記錄持倉
+/sell <股號> <賣出價> — 記錄出場
+/positions — 看目前持倉與損益
+
+*其他*
 /reset — 清空 AI 對話記憶
 /help — 這則說明
 
@@ -129,6 +137,119 @@ def cmd_remove(arg: str) -> str:
     return f"✅ 已將 *{sid}* 移出觀察名單。"
 
 
+def cmd_buy(arg: str) -> str:
+    """記錄一筆持倉。純記帳——不會真的下單，下單請自己去券商。"""
+    parts = arg.split()
+    if len(parts) < 2:
+        return (
+            "用法：`/buy <股號> <買進價> [張數]`\n"
+            "例：`/buy 2330 2400 2`\n\n"
+            "停損停利價會依系統設定自動算（-8% / +10%）。\n"
+            "_這只是記錄，不會真的下單_"
+        )
+
+    sid, _ = tools.resolve_stock(parts[0])
+    if sid is None:
+        return f"❌ 找不到「{parts[0]}」這檔股票。"
+    name = tools._info_map().get(sid, "")
+
+    try:
+        entry = float(parts[1])
+        shares = float(parts[2]) if len(parts) > 2 else 1
+    except ValueError:
+        return "❌ 買進價與張數需為數字。例：`/buy 2330 2400 2`"
+    if entry <= 0:
+        return "❌ 買進價需大於 0。"
+
+    stop = round(entry * (1 - CONFIG["stop_loss"]), 2)
+    target = round(entry * (1 + CONFIG["target_return"]), 2)
+
+    try:
+        sheet.add_trade(sid, name, shares, entry, stop, target)
+    except Exception as e:
+        return f"❌ 寫入失敗：{str(e)[:120]}"
+
+    return "\n".join([
+        f"✅ 已記錄持倉：*{sid} {name}*",
+        "",
+        f"買進價 {entry}｜{shares} 張",
+        f"停損 {stop}（-{CONFIG['stop_loss']*100:.0f}%）",
+        f"停利 {target}（+{CONFIG['target_return']*100:.0f}%）",
+        "",
+        "_盤中會自動監控，跨過價位會推播_",
+        "_這是記錄功能，不會真的下單_",
+    ])
+
+
+def cmd_sell(arg: str) -> str:
+    parts = arg.split()
+    if len(parts) < 2:
+        return "用法：`/sell <股號> <賣出價>`\n例：`/sell 2330 2450`"
+
+    sid, _ = tools.resolve_stock(parts[0])
+    if sid is None:
+        return f"❌ 找不到「{parts[0]}」這檔股票。"
+    try:
+        price = float(parts[1])
+    except ValueError:
+        return "❌ 賣出價需為數字。"
+
+    try:
+        r = sheet.close_trade(sid, price)
+    except Exception as e:
+        return f"❌ 更新失敗：{str(e)[:120]}"
+    if not r.get("ok"):
+        return f"❌ {r.get('message')}"
+
+    pnl = r.get("pnl_pct")
+    emoji = "🟢" if isinstance(pnl, (int, float)) and pnl > 0 else "🔴"
+    return "\n".join([
+        f"{emoji} 已出場：*{r['stock_id']} {r.get('name','')}*",
+        f"進場 {r['entry_price']} → 出場 {r['close_price']}",
+        f"損益 *{pnl:+.2f}%*" if isinstance(pnl, (int, float)) else "",
+        "",
+        "_已停止對它的盤中監控_",
+    ])
+
+
+def cmd_positions() -> str:
+    try:
+        trades = sheet.read_trades(open_only=True)
+    except Exception as e:
+        return f"❌ 讀取失敗：{str(e)[:120]}"
+    if not trades:
+        return "目前沒有持倉。用 `/buy 2330 2400 2` 記錄一筆。"
+
+    from . import quotes
+    ids = [str(t.get("stock_id", "")).strip() for t in trades]
+    qmap = quotes.get_quotes(ids)
+
+    lines = [f"💼 *持倉* ({len(trades)} 檔)", ""]
+    for t in trades:
+        sid = str(t.get("stock_id", "")).strip()
+        q = qmap.get(sid) or {}
+        try:
+            entry = float(t.get("entry_price") or 0)
+        except (TypeError, ValueError):
+            entry = 0
+        price = q.get("price")
+
+        lines.append(f"*{sid} {t.get('name','')}*　{t.get('shares','')} 張")
+        if price and entry:
+            pnl = (price / entry - 1) * 100
+            dot = "🟢" if pnl > 0 else ("🔴" if pnl < 0 else "⚪")
+            lines.append(f"{dot} 現價 {price:.2f}｜成本 {entry:.2f}｜*{pnl:+.2f}%*")
+        else:
+            lines.append(f"成本 {entry:.2f}（現價取得中）")
+        lines.append(f"停損 {t.get('stop_price','')}｜停利 {t.get('target_price','')}")
+        lines.append("")
+
+    if qmap:
+        any_q = next(iter(qmap.values()))
+        lines.append(f"_報價時間 {any_q.get('time','')}，約 20 秒延遲_")
+    return "\n".join(lines)
+
+
 def cmd_perf() -> str:
     s = tools.get_performance_summary()
     if s.get("error"):
@@ -158,6 +279,9 @@ COMMANDS = {
     "add": (cmd_add, True),
     "remove": (cmd_remove, True),
     "perf": (lambda a: cmd_perf(), False),
+    "buy": (cmd_buy, True),
+    "sell": (cmd_sell, True),
+    "positions": (lambda a: cmd_positions(), False),
 }
 
 
