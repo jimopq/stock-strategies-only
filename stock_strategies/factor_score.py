@@ -90,6 +90,127 @@ def factor_composite(ctx, params: dict | None = None) -> dict:
     }
 
 
+def _percentile(values: list[float], value: float) -> float:
+    """value 在 values 中的百分位（0~1）。同分取中間值，避免並列全給最高。"""
+    n = len(values)
+    if n <= 1:
+        return 0.5
+    below = sum(1 for v in values if v < value)
+    equal = sum(1 for v in values if v == value)
+    return (below + equal / 2) / n
+
+
+def apply_cross_sectional_ranking(results: list[dict], params: dict | None = None) -> int:
+    """把因子分從「絕對值」換成「在本次股池中的排名百分位」，並重算綜合分。
+
+    為什麼需要這一步：
+    因子的絕對值受市場狀態整體影響。多頭高檔時人人估值都貴，value 因子
+    對所有股票都是低分——它不提供區辨力，只是把所有人一起往下拉，
+    等於偷偷收緊了 BUY 門檻，而不是選得更準。
+
+    改用橫斷面排名後，分數永遠均勻分布在 0~1，因子回到它真正該做的事：
+    在同一時點比較「這檔相對其他檔如何」。這也是業界因子模型的標準做法。
+
+    在所有個股評估完之後呼叫（與 apply_market_filter 同一層）。
+    回傳實際被重算的檔數。
+    """
+    params = params or {}
+    if not params.get("use_factors"):
+        return 0
+
+    # 樣本太少時排名沒有統計意義，維持絕對分數比較誠實
+    min_n = params.get("min_universe_for_ranking", 10)
+    schools = params.get("factor_schools") or DEFAULT_SCHOOL_WEIGHTS
+
+    # 收集各派在整個股池的分數分布
+    pools: dict[str, list[float]] = {s: [] for s in schools}
+    for r in results:
+        detail = (r.get("components") or {}).get("factor_detail") or {}
+        for school, val in detail.items():
+            if school in pools and val is not None:
+                pools[school].append(float(val))
+
+    rankable = {s: v for s, v in pools.items() if len(v) >= min_n}
+    if not rankable:
+        return 0
+
+    total_weight = sum(float(w) for w in schools.values()) or 1.0
+    changed = 0
+
+    for r in results:
+        c = r.get("components") or {}
+        detail = c.get("factor_detail") or {}
+        parts = c.get("score_parts")
+        if not detail or not parts:
+            continue
+
+        # 逐派換成百分位
+        ranked = {}
+        num = den = 0.0
+        for school, val in detail.items():
+            if school not in rankable or val is None:
+                continue
+            pct = _percentile(rankable[school], float(val))
+            ranked[school] = round(pct, 3)
+            w = float(schools[school])
+            num += pct * w
+            den += w
+
+        if den == 0:
+            continue
+
+        composite = num / den
+        coverage = den / total_weight
+
+        wf = parts["w_fundamental"]
+        wt = parts["w_technical"]
+        wb = parts["w_backtest"]
+        wx = parts["w_factors"]
+        wsum = wf + wt + wb + wx
+        if wsum <= 0:
+            continue
+        wf, wt, wb, wx = (x / wsum for x in (wf, wt, wb, wx))
+
+        r["signal_score"] = round(
+            wf * parts["fund_score"] + wt * parts["tech_score"]
+            + wb * parts["bt_score"] + wx * composite * 100,
+            1,
+        )
+        c["factor_score"] = round(composite * 100, 1)
+        c["factor_detail"] = ranked
+        c["factor_coverage"] = round(coverage, 2)
+        c["factor_ranked"] = True
+        changed += 1
+
+    return changed
+
+
+def reclassify(results: list[dict], params: dict | None = None) -> None:
+    """綜合分被重算後，BUY/WATCH/SKIP 的判定也要跟著更新。
+
+    門檻邏輯與 evaluate() 保持一致：分數達標 + 基本面關卡 + 技術面下限。
+    """
+    params = params or {}
+    min_total = params.get("min_total_score_for_buy", 65)
+    min_tech = params.get("min_tech_score_for_buy", 50)
+    fund_required = params.get("fundamental_pass_required", True)
+
+    for r in results:
+        if r.get("action") in ("SKIP", "ERROR") and not r.get("components"):
+            continue
+        c = r.get("components") or {}
+        if not c.get("score_parts"):
+            continue
+        score = r.get("signal_score", 0)
+        fund_gate = (not fund_required) or c.get("fundamental_pass")
+        if score >= min_total and fund_gate and c.get("tech_score", 0) >= min_tech:
+            r["action"] = "BUY"
+        elif score >= 50:
+            r["action"] = "WATCH"
+        else:
+            r["action"] = "SKIP"
+
+
 def summarize(result: dict) -> list[str]:
     """把因子結果轉成人看得懂的短句，給 Telegram 與儀表板用。"""
     if not result or result.get("score") is None:

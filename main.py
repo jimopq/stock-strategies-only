@@ -84,6 +84,24 @@ def main(limit: int | None = None):
             results.append(r)
         time.sleep(0.6)
 
+    # 3b. 因子橫斷面排名：把因子分從絕對值換成在本次股池中的排名。
+    # 必須在大盤/夜盤濾鏡之前——reclassify 會重設 action，
+    # 放在濾鏡之後會把降級結果覆蓋掉。
+    try:
+        from stock_strategies.factor_score import (
+            apply_cross_sectional_ranking,
+            reclassify,
+        )
+        from stock_strategies.loader import merge_params
+
+        params = merge_params(None)
+        ranked = apply_cross_sectional_ranking(results, params)
+        if ranked:
+            reclassify(results, params)
+            print(f"📊 因子橫斷面排名：{ranked} 檔已依股池排名重算")
+    except Exception as e:
+        print(f"⚠️ 因子排名略過: {e}", file=sys.stderr)
+
     # 4. 套用大盤濾鏡：跌破月線時 BUY 一律降為 WATCH
     downgraded = apply_market_filter(results, market)
     if downgraded:

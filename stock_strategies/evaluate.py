@@ -102,6 +102,18 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
             signal_score += wx * (factor_res["score"] * 100)
         signal_score = round(signal_score, 1)
 
+        # 保留各項原始分與權重，讓橫斷面排名可以在全部股票算完後重算總分
+        # （見 factor_score.apply_cross_sectional_ranking）
+        score_parts = {
+            "fund_score": fund_score,
+            "tech_score": tech_score,
+            "bt_score": bt_score,
+            "w_fundamental": params["weight_fundamental"],
+            "w_technical": params["weight_technical"],
+            "w_backtest": params["weight_backtest"],
+            "w_factors": params.get("weight_factors", 0.0),
+        }
+
         fund_gate = (not params["fundamental_pass_required"]) or fund_pass
         if (
             signal_score >= params["min_total_score_for_buy"]
@@ -166,6 +178,8 @@ def evaluate(stock_id: str, name: str, strategy: dict | None = None) -> Optional
                 ),
                 "factor_detail": factor_res["detail"] if factor_res else {},
                 "factor_coverage": factor_res["coverage"] if factor_res else None,
+                "factor_ranked": False,
+                "score_parts": score_parts,
             },
             "trend": {
                 "chg_5d": round(chg_5d, 2),

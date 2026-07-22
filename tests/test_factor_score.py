@@ -133,3 +133,86 @@ def test_low_coverage_is_rejected(monkeypatch):
     out = ev._factor_score("2330", {"min_factor_coverage": 0.5}, result)
     assert out is None
     assert any("覆蓋率" in n for n in result["risk_notes"])
+
+
+# ── 橫斷面排名 ──────────────────────────────────────────────
+
+def _result(sid, detail, fund=100, tech=60, bt=55, wx=0.25):
+    return {
+        "stock_id": sid, "action": "WATCH", "signal_score": 0,
+        "components": {
+            "factor_detail": detail, "fundamental_pass": True, "tech_score": tech,
+            "factor_ranked": False,          # evaluate() 會帶這個欄位，fixture 要一致
+            "score_parts": {
+                "fund_score": fund, "tech_score": tech, "bt_score": bt,
+                "w_fundamental": 0.25, "w_technical": 0.25,
+                "w_backtest": 0.25, "w_factors": wx,
+            },
+        },
+    }
+
+
+def test_percentile_handles_ties_without_giving_all_the_top():
+    assert fs._percentile([1.0, 1.0, 1.0], 1.0) == pytest.approx(0.5)
+    assert fs._percentile([0.0, 1.0], 1.0) == pytest.approx(0.75)
+    assert fs._percentile([0.0, 1.0], 0.0) == pytest.approx(0.25)
+
+
+def test_ranking_spreads_scores_even_when_all_raw_values_are_low():
+    """核心價值：多頭高檔時 value 對所有人都低，絕對值不提供區辨力。
+    排名後分數應均勻分布，而不是集體被拉低。"""
+    params = {"use_factors": True, "factor_schools": {"value": 1.0},
+              "min_universe_for_ranking": 3}
+    results = [_result(str(i), {"value": 0.01 * i}) for i in range(1, 11)]
+
+    assert fs.apply_cross_sectional_ranking(results, params) == 10
+
+    ranked = [r["components"]["factor_detail"]["value"] for r in results]
+    assert min(ranked) < 0.2 and max(ranked) > 0.8
+    assert ranked == sorted(ranked)
+
+
+def test_ranking_is_skipped_when_universe_too_small():
+    """樣本太少時排名沒有統計意義，維持絕對分數比較誠實。"""
+    params = {"use_factors": True, "factor_schools": {"value": 1.0},
+              "min_universe_for_ranking": 10}
+    results = [_result(str(i), {"value": 0.1 * i}) for i in range(3)]
+    assert fs.apply_cross_sectional_ranking(results, params) == 0
+    assert results[0]["components"]["factor_ranked"] is False
+
+
+def test_ranking_noop_when_factors_disabled():
+    results = [_result(str(i), {"value": 0.1 * i}) for i in range(20)]
+    assert fs.apply_cross_sectional_ranking(results, {"use_factors": False}) == 0
+
+
+def test_ranking_recomputes_signal_score_with_correct_weights():
+    params = {"use_factors": True, "factor_schools": {"value": 1.0},
+              "min_universe_for_ranking": 2}
+    results = [_result(str(i), {"value": 0.1 * i}) for i in range(10)]
+    fs.apply_cross_sectional_ranking(results, params)
+
+    top = results[-1]
+    pct = top["components"]["factor_detail"]["value"]
+    expected = 0.25 * 100 + 0.25 * 60 + 0.25 * 55 + 0.25 * pct * 100
+    assert top["signal_score"] == pytest.approx(round(expected, 1))
+
+
+def test_reclassify_updates_action_after_rescoring():
+    params = {"min_total_score_for_buy": 65, "min_tech_score_for_buy": 50}
+    high = _result("1", {"value": 1.0}); high["signal_score"] = 80
+    low = _result("2", {"value": 0.0}); low["signal_score"] = 40
+    mid = _result("3", {"value": 0.5}); mid["signal_score"] = 55
+
+    fs.reclassify([high, low, mid], params)
+    assert high["action"] == "BUY"
+    assert low["action"] == "SKIP"
+    assert mid["action"] == "WATCH"
+
+
+def test_reclassify_respects_tech_floor():
+    """分數夠但技術面太弱不該給 BUY。"""
+    params = {"min_total_score_for_buy": 65, "min_tech_score_for_buy": 50}
+    r = _result("1", {"value": 1.0}, tech=10); r["signal_score"] = 90
+    fs.reclassify([r], params)
+    assert r["action"] == "WATCH"
