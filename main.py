@@ -127,6 +127,18 @@ def main():
         send_telegram(msg)
         time.sleep(0.5)
 
+    # 7b. AI 盤後短評（有設 GEMINI_API_KEY 才會產生）
+    try:
+        from bot.daily_ai import ai_commentary
+
+        commentary = ai_commentary(results, market=market, night_note=night_note)
+        if commentary:
+            print("發送 AI 盤後短評...")
+            send_telegram(commentary)
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"⚠️ AI 短評略過: {e}", file=sys.stderr)
+
     # 8. 若有累積的成績單，額外推一則摘要
     if stats and stats["count"] >= 5:
         send_telegram(_format_perf_message(stats))
