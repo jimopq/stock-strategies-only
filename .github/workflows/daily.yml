@@ -6,10 +6,25 @@ on:
     - cron: "30 6 * * 1-5"
   workflow_dispatch:
 
+# 部署靜態儀表板到 GitHub Pages 所需
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同時只跑一次部署，但不取消進行中的（訊號跑到一半被砍掉沒意義）
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
 jobs:
   run-signal:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
 
     steps:
       - name: Checkout
@@ -33,3 +48,22 @@ jobs:
           GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: uv run python main.py
+
+      # 接在訊號引擎之後跑，此時 parquet 快取是熱的，
+      # 讀價格畫 K 線不需要再打 FinMind
+      - name: Build dashboard
+        env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: uv run python -m dashboard.build
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

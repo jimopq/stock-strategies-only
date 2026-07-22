@@ -105,6 +105,14 @@ def main(limit: int | None = None):
     print("寫回 Google Sheet (Signals)...")
     append_signals(results)
 
+    # 5b. 另存一份完整結果給儀表板用
+    # Sheet 的 Signals 是扁平格式，缺 components/trend 巢狀結構，
+    # 詳情頁需要那些欄位，所以另外存一份。
+    try:
+        _dump_for_dashboard(results, market, night_note)
+    except Exception as e:
+        print(f"⚠️ 儀表板資料輸出失敗: {e}", file=sys.stderr)
+
     # 6. 更新 Performance 成績單（追蹤舊 BUY + 附上今日新 BUY）
     print("更新 Performance 成績單...")
     try:
@@ -148,6 +156,28 @@ def main(limit: int | None = None):
         send_telegram(_format_perf_message(stats))
 
     print("✅ 完成")
+
+
+def _dump_for_dashboard(results, market, night_note):
+    """把完整訊號結果寫成 JSON，供 dashboard.build 產生靜態頁面。"""
+    import json
+    from pathlib import Path
+
+    from bot.tools import _jsonable  # numpy/pandas 型別轉純 Python
+
+    out = Path(__file__).resolve().parent / "data"
+    out.mkdir(exist_ok=True)
+    payload = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "market": _jsonable(market),
+        "night_note": night_note,
+        "signals": _jsonable(results),
+    }
+    path = out / "signals-latest.json"
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    print(f"  → 儀表板資料已寫入 {path.name}")
 
 
 def _format_perf_message(stats: dict) -> str:

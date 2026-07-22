@@ -24,3 +24,6 @@ speech-to-text-*.json
 
 # FinMind 本地快取（parquet）
 .cache/
+
+# 儀表板資料（每次排程重新產生）
+data/signals-latest.json
