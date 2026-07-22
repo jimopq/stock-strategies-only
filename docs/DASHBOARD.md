@@ -38,8 +38,11 @@ Cloudflare Access 是在**網站前面**擋，未通過驗證根本拿不到 HTM
 
 1. 註冊 https://dash.cloudflare.com/sign-up
 2. 左側 **Workers & Pages** → **Create** → **Pages** → **Upload assets**
-3. 專案名稱填專案名稱（記下實際產生的網址，可能被加後綴）（要跟 workflow 裡的一致）
-4. 隨便上傳一個檔案建立專案即可，之後會被排程覆蓋
+3. 專案名稱自訂。⚠️ `*.pages.dev` 子網域是**全域唯一**，
+   名稱被佔用時 Cloudflare 會自動加後綴——**記下實際產生的網址**，
+   workflow 的 `--project-name` 必須跟它完全一致
+   （本專案實際是 `stock-dashboard-cij`）
+4. 直接把本機建好的 `dist/` 拖上去，等於建立專案的同時完成第一次部署
 
 ### 2. 取得 Account ID
 
