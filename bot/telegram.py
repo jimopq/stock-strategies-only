@@ -15,6 +15,10 @@ API_BASE = "https://api.telegram.org/bot{token}/{method}"
 MAX_LEN = 3900
 
 
+class TelegramAPIError(RuntimeError):
+    """Telegram API 回 ok:false（token 錯誤、被限流、衝突等）。"""
+
+
 def _split(text: str, limit: int = MAX_LEN) -> list[str]:
     """把長訊息切成多段，優先在換行處斷開，避免切壞 Markdown。"""
     if len(text) <= limit:
@@ -50,8 +54,28 @@ class TelegramClient:
         return r.json()
 
     # ── 收 ──
+    def get_me(self) -> dict:
+        """驗證 token。回傳 bot 資訊；token 無效時拋 RuntimeError。
+
+        必須在主迴圈前呼叫：token 錯誤時 getUpdates 會立刻回 ok:false
+        而不是拋例外，沒先擋掉的話迴圈會全速空轉狂打 API。
+        """
+        try:
+            data = self._call("getMe", {})
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"無法連線到 Telegram: {e}") from e
+        if not data.get("ok"):
+            raise RuntimeError(
+                f"TELEGRAM_BOT_TOKEN 無效: {data.get('description', '未知錯誤')}"
+            )
+        return data.get("result", {})
+
     def get_updates(self, offset: int | None = None, long_poll: int = 30) -> list[dict]:
-        """長輪詢取新訊息。long_poll 秒內沒訊息就回空陣列。"""
+        """長輪詢取新訊息。long_poll 秒內沒訊息就回空陣列。
+
+        API 回錯（非連線問題）時拋 TelegramAPIError，讓呼叫端決定要
+        退避還是中止——直接吞掉會讓主迴圈空轉。
+        """
         payload = {"timeout": long_poll, "allowed_updates": ["message"]}
         if offset is not None:
             payload["offset"] = offset
@@ -61,11 +85,9 @@ class TelegramClient:
         except requests.exceptions.Timeout:
             return []
         except requests.exceptions.RequestException as e:
-            print(f"⚠️ getUpdates 連線失敗: {e}", file=sys.stderr)
-            return []
+            raise TelegramAPIError(f"連線失敗: {e}") from e
         if not data.get("ok"):
-            print(f"⚠️ getUpdates 失敗: {data.get('description')}", file=sys.stderr)
-            return []
+            raise TelegramAPIError(str(data.get("description", "未知錯誤")))
         return data.get("result", [])
 
     # ── 送 ──

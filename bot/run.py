@@ -19,7 +19,7 @@ except ImportError:
 
 from . import handlers
 from .brain import Brain
-from .telegram import TelegramClient
+from .telegram import TelegramAPIError, TelegramClient
 
 REQUIRED_ENV = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "FINMIND_TOKEN"]
 
@@ -95,25 +95,52 @@ def main() -> None:
     else:
         _log("⚠️ 未設定 GEMINI_API_KEY，以純指令模式執行")
 
+    # 先驗證 token，失敗就直接結束（不然主迴圈會空轉狂打 API）
+    try:
+        me = tg.get_me()
+        _log(f"🔗 已連上 @{me.get('username', '?')}")
+    except RuntimeError as e:
+        print(f"❌ {e}", file=sys.stderr)
+        sys.exit(1)
+
     tg.delete_webhook()
 
     # 跳過啟動前累積的舊訊息，避免一開機就回覆一堆歷史訊息
     offset = None
-    pending = tg.get_updates(offset=-1, long_poll=0)
-    if pending:
-        offset = pending[-1]["update_id"] + 1
-        _log(f"略過 {len(pending)} 則啟動前的舊訊息")
+    try:
+        pending = tg.get_updates(offset=-1, long_poll=0)
+        if pending:
+            offset = pending[-1]["update_id"] + 1
+            _log(f"略過 {len(pending)} 則啟動前的舊訊息")
+    except TelegramAPIError as e:
+        _log(f"⚠️ 讀取舊訊息失敗，從頭開始: {e}")
 
     _log("✅ 機器人已上線，等待訊息中（Ctrl+C 結束）")
 
+    failures = 0
     while True:
         try:
             updates = tg.get_updates(offset=offset, long_poll=30)
+            failures = 0
         except KeyboardInterrupt:
             break
+        except TelegramAPIError as e:
+            msg = str(e)
+            if "Conflict" in msg:
+                # 另一個 bot.run 正在跑；兩個實例會互搶訊息，直接結束比較清楚
+                print(f"❌ 偵測到另一個機器人實例正在執行，本次結束。\n   {msg}",
+                      file=sys.stderr)
+                sys.exit(1)
+            failures += 1
+            wait = min(60, 5 * failures)   # 指數退避，上限 60 秒
+            _log(f"⚠️ 輪詢失敗（第 {failures} 次），{wait} 秒後重試: {msg}")
+            time.sleep(wait)
+            continue
         except Exception as e:
-            _log(f"⚠️ 輪詢異常，5 秒後重試: {e}")
-            time.sleep(5)
+            failures += 1
+            wait = min(60, 5 * failures)
+            _log(f"⚠️ 輪詢異常，{wait} 秒後重試: {e}")
+            time.sleep(wait)
             continue
 
         for u in updates:

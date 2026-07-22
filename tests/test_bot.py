@@ -5,7 +5,45 @@ import pytest
 
 from bot import handlers, tools
 from bot.run import _allowed
-from bot.telegram import MAX_LEN, _split
+from bot.telegram import MAX_LEN, TelegramAPIError, TelegramClient, _split
+
+
+# ── Telegram API 錯誤處理 ───────────────────────────────────
+
+def test_get_me_raises_on_invalid_token(monkeypatch):
+    c = TelegramClient(token="bad")
+    monkeypatch.setattr(
+        c, "_call", lambda *a, **k: {"ok": False, "description": "Unauthorized"}
+    )
+    with pytest.raises(RuntimeError, match="無效"):
+        c.get_me()
+
+
+def test_get_updates_raises_instead_of_silently_returning_empty(monkeypatch):
+    """API 回 ok:false 若被吞成空陣列，主迴圈會全速空轉狂打 API。"""
+    c = TelegramClient(token="bad")
+    monkeypatch.setattr(
+        c, "_call", lambda *a, **k: {"ok": False, "description": "Unauthorized"}
+    )
+    with pytest.raises(TelegramAPIError, match="Unauthorized"):
+        c.get_updates()
+
+
+def test_send_message_falls_back_to_plain_on_markdown_error(monkeypatch):
+    """LLM 常產生不成對的 * 或 _，Markdown 壞掉時必須改送純文字。"""
+    c = TelegramClient(token="x")
+    calls = []
+
+    def fake_call(method, payload, timeout=None):
+        calls.append(payload)
+        if "parse_mode" in payload:
+            return {"ok": False, "description": "can't parse entities"}
+        return {"ok": True}
+
+    monkeypatch.setattr(c, "_call", fake_call)
+    assert c.send_message(1, "壞掉的 *markdown") is True
+    assert len(calls) == 2
+    assert "parse_mode" in calls[0] and "parse_mode" not in calls[1]
 
 
 # ── 訊息分段 ────────────────────────────────────────────────
